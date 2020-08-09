@@ -1,0 +1,704 @@
+##### Data manipulation #####
+
+# Reading the whole SPSS data into R (one could use the ´haven´ package as well)
+library(foreign)
+school <- read.spss("EndataForR2_schooltech.sav", use.value.labels = FALSE, to.data.frame = TRUE)
+
+# Writing the CSV file and reading it again (to make my life easier)
+write.csv(school, file = "SchoolTech3.csv", row.names = FALSE, na="NA")
+school <- read.csv("SchoolTech3.csv")
+str(school) # exploring the structure
+
+# Mutating gender as factor
+school$gender <- factor(school$gender, labels = c("Female", "Male"))
+table(school$gender) # exploring the frequencies
+class(school3$gender) # verifying the variable type
+
+# Mutating grade as ordered factor
+school$grade <- factor(school$grade, labels = c("5th grade", "6th grade", "7th grade"), ordered = TRUE)
+table(school$grade) # exploring the frequencies
+class(school$grade) # verifying the variable type
+
+# Writing the CSV file again for further use
+write.csv(school, file = "SchoolTech3.csv", row.names = FALSE, na="NA")
+
+
+##### Exploring the data #####
+
+# An example for exploring the basic descriptive statistics
+library(psych)
+describe(school[,119:122], type = 2) # type 2 calculates the values of kurtosis and skewness similarly than SPSS
+
+
+##### Missing values analysis #####
+
+# Graphical presentation (missingness map) for missing values pattern
+library(VIM)
+schotech_aggr <- aggr(school, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE,
+labels=names(school), cex.axis= 0.5, gap=0.1,
+ylab=c("Proportion of missingness","Missingness Pattern"))
+
+# An example for graphical presentation of pairwise missingness pattern
+marginplot(school[, c("energ1a", "age")], col=c("blue","red","orange"), cex=1.2,
+cex.lab=1, cex.numbers=1.3, pch=19)
+
+# Numerical detection for missing values pattern
+library(mice)
+md.pattern(school) # explores the complete rows, and missingness by rows and columns
+md.pairs(school) # compares the missingness for all pairs of variables
+
+
+##### Multiple imputation #####
+
+# Reading the data again
+d <- read.csv("SchoolTech3.csv")
+
+# Dry run for identifying possible problems in the data
+library(mice)
+ini <- mice(d, maxit = 0) # dry mice() run of original data to inspect logged events
+ini$loggedEvents # implies that there are no problematic variables
+
+# Multiple imputation
+library(misc) # for quickpred
+pred <- quickpred(d, mincor = 0.16) # creating the prediction matrix
+imput <- mice(d, predictorMatrix = pred, seed = 5837, m = 30) # actual imputation
+saveRDS(imput, file = "mice30.rds") # saving the imputation as rds format for further use
+
+# Scanning the imputed values
+imput$imp # shows only the imputed values
+
+# Assessing the convergence of each variable
+plot(imput)
+
+# Plotting the densities of the observed and imputed data, an example for one variable
+library(lattice)
+densityplot(imput, ~gender)
+
+# Completing the m imputed datasets as a long matrix
+com <- complete(imput, "long", inc=T)
+com # for scanning the values
+
+# Actions before merging the 30 imputed datasets
+d$gender <- as.numeric(d$gender) # transforming to numerical for merge_imputation
+class(d$gender) # verifying
+table(d$gender) # verifying
+
+d$grade <- as.numeric(d$grade) # transforming to numerical for merge_imputation
+class(d$grade) # verifying
+table(d$grade) # verifying
+
+# Merging the 30 imputed datasets
+library(sjmisc); library(dplyr )
+merged <- merge_imputations(d, imput)
+table(is.na(merged)) # verifying that no missing values emerge
+
+# Grade doesn't show up because it was complete and wasn't imputed
+merged$grade <- d$grade # adding the grade to merged dataset
+table(merged$grade) # verifying
+
+# Actions after merging the datasets
+merged$gender <- factor(merged$gender, labels = c("Female", "Male")) # Gender back as factor
+table(merged$gender) # verifying
+
+merged$grade <- factor(merged$grade, labels = c("5th grade", "6th grade", "7th grade"),
+ordered = TRUE) # grade back as ordered factor
+table(merged$grade) # verifying
+
+## Save the object "merged" as CSV file
+write.csv(merged, file = "merged_mice_m30.csv")
+
+
+##### Exploratory factor analysis for items of socio-digital participation #####
+
+# Reading the whole data
+data <- read.csv("merged_mice_m30.csv")
+
+# Subsetting the items of socio-digital participation
+library(tidyverse)
+howoften <- dplyr::select(data, 122:152, 178:194)
+names(howoften) # verifying the items
+
+# Pearson correlation matrix with all items
+cormat1 <- cor(howoften, method = "pearson")
+
+# Selecting items to the final factor model (46 items)
+often <- select(howoften, -skill3j, -stdy3t)
+names(often) # verifying the items
+
+# New correlation matrix
+cormat3 <- cor(often, method = "pearson")
+
+# Kaiser-Meyer-Olkin Measure of Sampling Adequacy (KMO)
+library(psych)
+KMO(cormat3)
+
+# Bartlett’s Test of Sphericity
+cortest.bartlett(cormat3, n=296)
+
+# Determinant of the correlation matrix
+determ <- det(cormat3)
+determ > 0.00001 # FALSE
+determ
+
+# Squared Multiple correlations (initial communalities)
+squared <- smc(cormat3)
+squared # None of these are close 0 or 1
+
+# Parallel analysis
+para <- fa.parallel(cormat3, fm = "wls", n.iter = 100, cor = "cor", n.obs = 296,
+fa = "fa", SMC = FALSE)
+print(para) # printing the numerical results
+para$fa.values # The eigenvalues of the factor model for the real data
+para$fa.sim # The descriptive statistics of the simulated factor models
+para$nfact # Number of factors with eigenvalues > eigenvalues of random data
+
+# Factor analysis without rotation to explore the initial eigenvalues and unrotated loadings
+fa <- fa(cormat3, fm = "wls", rotate = "none", nfactors = 9, residuals = TRUE,
+n.obs = 296)
+print(fa) # printing the results
+
+# Rotated factor solution
+library(psych)
+fa5 <- fa(cormat3, fm = "wls", rotate = "oblimin", nfactors = 9, residuals = TRUE,
+n.obs = 296, max.iter = 50)
+print(fa5) # printing the results
+
+round(fa5$communality, 4) # Communalities h2 rounded with 4 digits
+
+round(fa5$uniquenesses, 3) # Unique variance u2 rounded with 3 digits
+
+round(fa5$values, 4) # Eigenvalues of the common factor solution (seems to be non-rotated)
+
+fa5$Vaccounted # Variance accounted for the rotated model
+
+print(fa5$loadings, cutoff = .3, sort = TRUE) # Pattern matrix: loadings
+print(fa5$Structure, cutoff = .3) # Structure matrix
+
+factor.residuals(cormat3, fa5$loadings) # Residuals
+
+fa5$fit.off # fit based upon off diagonal values
+
+
+##### Reliability analysis for mean composite scores of socio-digital dimensions #####
+
+# Dimensions from factor analysis
+keys.list <- list(copresence = c("mes3a", "kom3b", "status3c", "mus3d", "pic3m"),
+viewing = c("vide3e", "ftube3h"),
+socGaming = c("fun4a", "exer4b", "music4c", "puzz4d"),
+recGaming = c("sport4e", "car4f", "role4g", "strat4h", "shoot4i", "adv4j"),
+medProduct = c("tweet3f", "rblog3g", "forum3i", "ktube3l",
+"edit3n", "mix3o", "art3p", "stry3q"),
+creProduct = c("kblog3k", "web3r", "code3s", "prog3u"),
+engageScho = c("write11a", "task11b", "info11c", "pres11d",
+"proj11e", "resear11l", "hmw12a"),
+knowledge = c("note12b", "help12c", "ghelp12d", "conv12e"),
+creProdScho = c("film11f", "build11g", "proc11h", "inven11i",
+"smart11j", "outs11k"))
+
+# Keys for reliability analysis
+keys <- make.keys(often, keys.list)
+
+# Actual reliability analysis (e.g. alpha, Guttman's Lambda 6)
+results <- scoreItems(keys = keys, often, totals = FALSE,
+missing = FALSE, min = 1, max = 7)
+print(results, short = FALSE) # long version of results
+
+
+##### Reliability analysis with psych::omega for dimensions of socio-digital participation #####
+
+# Omega for Digital copresence
+copre <- dplyr::select(often, mes3a, kom3b, status3c, mus3d, pic3m)
+omega(copre, nfactors = 1, fm = "wls")
+
+# Omega for Media-viewing
+view <- dplyr::select(often, vide3e, ftube3h)
+omega(view, nfactors = 1, fm = "wls")
+
+# Omega for Social gaming
+socg <- dplyr::select(often, fun4a, exer4b, music4c, puzz4d)
+omega(socg, nfactors = 1, fm = "wls")
+
+# Omega for Recreational gaming
+recg <- dplyr::select(often, sport4e, car4f, role4g, strat4h, shoot4i, adv4j)
+omega(recg, nfactors = 1, fm = "wls")
+
+# Omega for Media production: experimenting & play
+experi <- dplyr::select(often, tweet3f, rblog3g, forum3i, ktube3l, edit3n, mix3o, art3p, stry3q)
+omega(experi, nfactors = 1, fm = "wls")
+
+# Omega for Personal creative production
+crepro <- dplyr::select(often, kblog3k, web3r, code3s, prog3u)
+omega(crepro, nfactors = 1, fm = "wls")
+
+# Omega for "Media engagement for schoolwork" (new name is technical knowledge creation)
+schowork <- dplyr::select(often, write11a, task11b, info11c, pres11d, proj11e, resear11l, hmw12a)
+omega(schowork, nfactors = 1, fm = "wls")
+
+# Omega for Constructing academic knowledge (new name is Collective knowledge creation)
+acaknow <- dplyr::select(often, note12b, help12c, ghelp12d, conv12e)
+omega(acaknow, nfactors = 1, fm = "wls")
+
+# Omega for Academic creative production
+creproscho <- dplyr::select(often, film11f, build11g, proc11h, inven11i, smart11j, outs11k)
+omega(creproscho, nfactors = 1, fm = "wls")
+
+
+##### Creating mean composite and regression scores for dimensions of socio-digital participation #####
+
+# Creating the mean composite variables
+composites <- data.frame(results$scores)
+
+psych::describe(composites) # exploring the distributions
+
+# Correlation matrix of mean composites with corresponding p-values
+library(sjPlot) # new package to print results in html and in more publishable format
+sjt.corr(composites, corr.method = "pearson", triangle = "lower",
+string.diag = rep(c(1), 9), digits = 2,
+CSS=list(css.thead="border-top:double black; font-weight:normal; font-size:0.9em;",
+css.firsttablecol="font-weight:normal; font-size:0.9em;"))
+
+# Factor scores with regression method (if needed later)
+regrEfa <- fa(often, fm = "wls", rotate = "oblimin", nfactors = 9, residuals = TRUE,
+scores = "regression")
+
+# Regression scores matrix to data.frame
+regscores <- data.frame(regrEfa$scores)
+
+# Renaming the regression scores
+library(dplyr)
+regs <- rename(regscores, recCoPre = WLS2, regView = WLS7,
+regSocGame = WLS9, regRecGame = WLS4,
+regExperi = WLS8, regCrePro = WLS3,
+regSchoWork = WLS1, regAcaKnow = WLS6,
+regCreScho = WLS5)
+
+# Factor scores based on Bartlett method (if needed later)
+bartefa <- fa(often, fm = "wls", rotate = "oblimin", nfactors = 9, residuals = TRUE,
+scores = "Bartlett")
+
+# Bartlett scores matrix to data.frame
+bartscores <- data.frame(bartefa$scores)
+
+# Renaming the Bartlett scores
+bart <- rename(bartscores, bartCoPre = WLS2, bartView = WLS7,
+bartSocGame = WLS9, bartRecGame = WLS4,
+bartExperi = WLS8, bartCrePro = WLS3,
+bartSchoWork = WLS1, bartAcaKnow = WLS6,
+bartCreScho = WLS5)
+
+# Factor scores based on Anderson method (if needed later)
+andefa <- fa(often, fm = "wls", rotate = "oblimin", nfactors = 9, residuals = TRUE,
+scores = "Anderson")
+
+# Anderson scores matrix to data.frame
+andscores <- data.frame(andefa$scores)
+
+# Renaming the Anderson scores
+and <- rename(andscores, andCoPre = WLS2, andView = WLS7,
+andSocGame = WLS9, andRecGame = WLS4,
+andExperi = WLS8, andCrePro = WLS3,
+andSchoWork = WLS1, andAcaKnow = WLS6,
+andCreScho = WLS5)
+
+# Binding the composite and background variables and regression scores
+backrounds <- dplyr::select(data, gender, age, grade)
+newdata <- cbind(backrounds, composites, regs, bart, and)
+
+# Writing a new file for factor
+write.csv(newdata, file = "digifactors.csv")
+
+
+##### Exploratory factor analysis for items of socio-digital competences #####
+
+# Reading the whole data
+data <- read.csv("merged_mice_m30.csv")
+
+# Subsetting the the competence items
+competence <- dplyr::select(data, 163:177)
+names(competence) # verifying
+
+# Removing
+comp <- dplyr::select(competence, -com10a)
+
+# Creating the Pearson correlation matrix
+cormat3 <- cor(comp, method = "pearson")
+
+# Kaiser-Meyer-Olkin Measure of Sampling Adequacy (KMO)
+library(psych)
+KMO(cormat3)
+
+# Bartlett’s Test of Sphericity
+cortest.bartlett(cormat3, n=296)
+
+# Determinant
+determ3 <- det(cormat3)
+determ3
+determ3 > 0.00001 # True
+
+# Squared Multiple Correlations (SMCs) of correlation matrix
+squar3 <- smc(cormat3)
+squar3
+range(squar3) # Between 0.35 and 0.69
+# Parallel analysis with ml
+para4 <- fa.parallel(cormat3, fm = "ml", fa = "fa", n.iter = 100, n.obs = 296)
+print(para4)
+
+# Conducting the EFA: rotated solution
+efa5_2 <- fa(cormat3, fm = "minres", rotate = "promax", nfactors = 3,
+residuals = TRUE, n.obs = 296)
+print(efa5_2)
+
+# Variance accounted
+efa5_2$Vaccounted # variance accounted for the rotated model
+
+# Communalities
+round(efa5_2$communalities, 3)
+
+# Uniqueness
+round(efa5_2$uniquenesses, 3)
+
+# Pattern matrix: loadings, minres, promax, 3 factors
+print(efa5_2$loadings, cutoff = .3, sort = TRUE)
+➔ Code for structure matrix, residuals and fit values are identical to previously presented
+
+
+##### Reliability analysis for mean composite scores of competence factors #####
+
+# Dimensions from factor analysis
+keys.list2 <- list(daily = c("searc10b", "word10c", "ppp10d", "file10e"),
+art = c("draw10f", "digi10g", "evid10j"),
+advan = c("three10i", "arob10k", "crob10l",
+"oblog10m", "app10n", "comp10o", "sound10h"))
+
+# Keys for reliability analysis
+keys2 <- make.keys(comp, keys.list2)
+
+# Actual reliability analysis
+results2 <- scoreItems(keys = keys2, comp, totals = FALSE,
+missing = FALSE, min = 1, max = 5)
+results2
+
+
+##### Reliability analysis with psych::omega for competence factors #####
+
+# Omega total for academic competences
+daily <- dplyr::select(comp, searc10b, word10c, ppp10d, file10e)
+omega(daily, nfactors = 1, fm = "minres", rotate = "promax", n.obs = 296)
+
+# Omega total for artistic competences
+art <- dplyr::select(comp, draw10f, digi10g, evid10j)
+omega(art, nfactors = 1, fm = "minres", rotate = "promax", n.obs = 296)
+
+# Omega total for technical competences
+advance <- dplyr::select(comp, three10i, arob10k, crob10l,
+oblog10m, app10n, comp10o, sound10h)
+omega(advance, nfactors = 1, fm = "minres", rotate = "promax", n.obs = 296)
+
+
+##### Creating mean composite scores for competence factors #####
+
+# Exploring the distributions of factors
+psych::describe(results2$scores)
+
+# Converting scores as data-frame
+composite2 <- data.frame(results2$scores)
+
+# Correlations between factors
+round(cor(composite2), 3)
+
+# Binding the composite scores with earlier data
+factors <- read.csv("digifactors.csv")
+new2 <- cbind(factors, composite2)
+
+# Writing new CSV file
+write.csv(new2, file = "digifactors.csv")
+
+
+##### Latent profile analysis for dimensions of socio-digital participation #####
+
+# Reading the data
+data <- read.csv("digifactors.csv")
+
+# Subsetting the items of socio-digital participation
+library(dplyr)
+howoft1 <- dplyr::select(data, 5:13)
+
+# Comparing profile solutions in terms of BIC
+library(tidyLPA)
+compare_solutions(howoft1, 1:9) # Can be presented as a table by adding “return_table = TRUE” inside the brackets
+
+# ICL is also available; add the argument statistic = "ICL"
+compare_solutions(howoft1, 1:9, statistic = "ICL")
+
+# Estimating parameters of profiles for a specific solution
+profiles1 <- estimate_profiles(howoft1, 1:9,
+model = 3, # varying means and variances, covariances fixed to 0 (model VVI)
+n_profiles = 3,
+print_which_stats = "all") # to see all fit statistics
+
+# Detailed information about the profile parameter estimates
+str(profiles1)
+
+# Bootstrapped likelihood-ratio test (LRT) from the ´mclust´ package
+library(mclust)
+LRT = mclustBootstrapLRT(howoft1, modelName = "VVI") # mod2
+LRT
+
+# Plotting the centered and standardized values
+plot_profiles(profiles1, to_center = TRUE, to_scale = TRUE)
+
+# Posterior probabilities
+posterior <- profiles1$posterior_prob
+posterior
+
+# Exploring the mean posterior probabilities per profile
+profs <- profiles1$profile
+
+aggregate(formula = posterior ~ profs,
+data = profiles3, FUN = mean)
+
+# Same than Entropy
+mean(posterior)
+
+# To access the detailed information inside profiles
+profinfo <- attributes(profiles1)$mclust_output$parameters
+profinfo
+
+# Accessing not standardized mean values of each profile indicator
+profile_means <- profinfo$mean
+colnames(profile_means) <- c("profile1", "profile2", "profile3") # adding the column names
+df_profile_means <- data.frame(profile_means) # matrix to a data frame
+
+# Accessing standardized (scaled and centered) values
+centered <- plot_profiles(profiles1, to_center = TRUE, to_scale = TRUE)
+centered$data # Accessing descriptive statistics of each profile per indicator
+scaled_means <- centered$data$mean
+scaled_means <- matrix(scaled_means, nrow = 9, ncol = 3)
+colnames(scaled_means) <- c("profile1", "profile2", "profile3") # adding the column names
+rownames(scaled_means) <- c("acaKnow", "copre", "crePro", "creScho",
+"experi", "recGame", "schoWork", "socGame", "view") # adding row names
+
+# To get the rows of scaled means to the same order than profile means
+scaled_means <- scaled_means[order(rownames(profile_means)), ]
+df_scaled_means <- data.frame(scaled_means) # matrix to a data frame
+
+# Making a list of profile parameters and saving it with saveRDS
+library(rlist)
+profile_parameters <- list.append(profinfo, profile_means, df_profile_means,
+scaled_means, df_scaled_means)
+saveRDS(profile_parameters, "profile_parameters.rds")
+
+# Binding the profiles with digifactors
+profiles <- profiles1$profile
+posterior_probs <- profiles1$posterior_prob
+
+newdata <- cbind(data, profiles, posterior_probs)
+newdata <- dplyr::select(newdata, -X) # an extra X just keeps emerging :)
+write.csv(newdata, file = "digifactors_profiles.csv")
+
+# Numerus per profile as a function of gender
+table(newdata$profiles, newdata$gender)
+
+# Chi-Square Test of Independence (profiles/gender)
+chigender <- chisq.test(newdata$profiles, newdata$gender)
+chigender
+
+
+##### Two-way factorial ANOVAs #####
+
+# Reading the CSV for digifactors_profiles
+data <- read.csv("digifactors_profiles.csv")
+
+# Profiles as factors
+data$profiles <- factor(data$profiles,
+levels = c("1", "2", "3"))
+class(data$profiles) #verifying
+
+# Descriptives for Academic socio-digital competences
+round(psych::describe(data$daily, type = 2), 3)
+
+# Descriptives for Artistic socio-digital competences
+round(psych::describe(data$art, type = 2), 3)
+
+# Descriptives for Technical socio-digital competences
+round(psych::describe(data$advan, type = 2), 3)
+
+# Levene’s test for Academic socio-digital competence
+car::leveneTest(daily ~ gender * profiles, data = data)
+
+# Levene’s test for Artistic socio-digital competence
+car::leveneTest(art ~ gender * profiles, data = data)
+
+# Levene’s test for Technical socio-digital competence
+car::leveneTest(advan ~ gender * profiles, data = data)
+
+# Exploring mean values for Academic skills by profiles
+aggregate(formula = daily ~ profiles,
+data = data, FUN = mean)
+
+# Exploring standard deviations for Academic skills by profiles
+aggregate(formula = daily ~ profiles,
+data = data, FUN = sd)
+
+# Exploring mean values for Academic skills by gender
+aggregate(formula = daily ~ gender,
+data = data, FUN = mean)
+
+# Exploring standard deviations for Academic skills by gender
+aggregate(formula = daily ~ gender,
+data = data, FUN = sd)
+
+# Regression model with interaction effects for Academic socio-digital competences
+reg1 <- lm(daily ~ gender * profiles, data = data)
+summary(reg1)
+
+# Regression model with main effects for Academic socio-digital competences
+reg1_3 <- lm(daily ~ gender + profiles, data = data)
+summary(reg1)
+
+# Two-way Anova with interaction effects for Academic socio-digital competences
+library(car)
+ano1_2 <- Anova(reg1, type = 3)
+ano1_2
+
+# Two-way Anova with main effects for Academic socio-digital competences
+ano1 <- Anova(reg1_3, type = 2)
+ano1
+
+# Partial eta squared: Effects for gender and profiles (Academic socio-digital competences)
+library(sjstats)
+eff1_2 <- eta_sq(ano1, partial = TRUE)
+eff1_2
+
+# Pairwise comparisons: Academic skills as a function of profiles with Tukey
+library(emmeans)
+em <- emmeans(reg1_3, pairwise ~ profiles, adjust = "tukey")
+summary(em)
+
+# Pairwise comparisons: Academic skills as a function of profiles with Bonferroni
+em1 <- emmeans(reg1_3, pairwise ~ profiles, adjust = "bonferroni")
+summary(em1)
+
+# Pairwise comparisons: Academic skills as a function of profiles with Scheffé
+em1_2 <- emmeans(reg1_3, pairwise ~ profiles, adjust = "scheffe")
+summary(em1_2)
+
+# Residual plots for Academic skills by gender and profiles
+plot(reg1_3)
+
+# Histogram of residuals
+a <- residuals(reg1_3)
+library(rcompanion)
+plotNormalHistogram(a)
+
+# Exploring mean values for Artistic skills by profiles
+aggregate(formula = art ~ profiles,
+data = data, FUN = mean)
+
+# Exploring standard deviations for Artistic skills by profiles
+aggregate(formula = art ~ profiles,
+data = data, FUN = sd)
+
+# Exploring mean values for Artistic skills by gender
+aggregate(formula = art ~ gender,
+data = data, FUN = mean)
+
+# Exploring standard deviations for Artistic skills by gender
+aggregate(formula = art ~ gender,
+data = data, FUN = sd)
+
+# Regression model with interaction effects for Artistic socio-digital competences
+reg2_2 <- lm(art ~ gender * profiles, data = data)
+summary(reg2_2)
+
+# Regression model with main effects for Artistic socio-digital competences
+reg2_3 <- lm(art ~ gender + profiles, data = data)
+summary(reg2_3)
+
+# Two-way Anova with interaction effects for Artistic socio-digital competences
+ano2_2 <- Anova(reg2_2, type = 2)
+ano2_2
+
+# Two-way Anova with main effects for Artistic socio-digital competences
+ano2 <- Anova(reg2_3, type = 2)
+ano2
+
+# Partial eta squared: Effects for gender and profiles
+eff2_2 <- eta_sq(ano2, partial = TRUE)
+eff2_2
+
+# Pairwise comparisons for Artistic skills by profiles with Tukey
+em2 <- emmeans(reg2_3, pairwise ~ profiles, adjust = "tukey")
+summary(em2)
+
+# Pairwise comparisons for Artistic skills by profiles with Bonferroni
+em2_2 <- emmeans(reg2_3, pairwise ~ profiles, adjust = "bonferroni")
+summary(em2_2)
+
+# Pairwise comparisons for Artistic skills by profiles with Scheffé
+em2_3 <- emmeans(reg2_3, pairwise ~ profiles, adjust = "scheffe")
+summary(em2_3)
+
+# Residual plots for Artistic skills by gender and profiles
+plot(reg2_3)
+
+# Histogram of residuals
+b <- residuals(reg2_3)
+library(rcompanion)
+plotNormalHistogram(b)
+
+# Exploring mean values for Technical skills by profiles
+aggregate(formula = advan ~ profiles,
+data = data, FUN = mean)
+
+# Exploring standard deviations for Technical skills by profiles
+aggregate(formula = advan ~ profiles,
+data = data, FUN = sd)
+
+# Exploring mean values for Technical skills by gender
+aggregate(formula = advan ~ gender,
+data = data, FUN = mean)
+
+# Exploring standard deviations for Technical skills by gender
+aggregate(formula = advan ~ gender,
+data = data, FUN = sd)
+
+# Regression model with interaction effects for Technical socio-digital competences
+reg3_1 <- lm(advan ~ gender * profiles, data = data)
+summary(reg3_1)
+
+# Regression model with main effects for Technical socio-digital competences
+reg3_2 <- lm(advan ~ gender + profiles, data = data)
+summary(reg3_2)
+
+# Two-way Anova with interaction effects for Technical socio-digital competences
+ano3_1 <- Anova(reg3_1, type = 2)
+ano3_1
+
+# Two-way Anova with main effects for Technical socio-digital competences
+ano3_2 <- Anova(reg3_2, type = 2)
+ano3_2
+
+# Partial eta squared: Effects for gender and profiles
+eff3_2 <- eta_sq(ano3_2, partial = TRUE)
+eff3_2
+
+# Pairwise comparisons for Technical skills by profiles with Tukey
+em3 <- emmeans(reg3_2, pairwise ~ profiles, adjust = "tukey")
+summary(em3)
+
+# Pairwise comparisons for Technical skills by profiles with Bonferroni
+em3_2 <- emmeans(reg3_2, pairwise ~ profiles, adjust = "bonferroni")
+summary(em3_2)
+
+# Pairwise comparisons for Technical skills by profiles with Scheffé
+em3_3 <- emmeans(reg3_2, pairwise ~ profiles, adjust = "scheffe")
+summary(em3_3)
+
+# Residual plots for Technical skills by gender and profiles
+plot(reg3_2)
+
+# Histogram of residuals
+c <- residuals(reg3_2)
+library(rcompanion)
+plotNormalHistogram(c)

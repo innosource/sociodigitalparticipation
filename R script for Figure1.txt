@@ -1,0 +1,79 @@
+
+# Read correlation matrix
+mv2<-read.csv("Correlation matrix v2.csv", sep=";")
+
+# Make matrix
+mcor2<-as.matrix(mv2)
+
+# Copy column headers to row headers
+rownames(mcor2)<-(colnames(mcor2))[-1]
+
+# Remove first column
+mcor2<-mcor2[,-1]
+
+# Convert textual data to numeric
+mcor2<-apply(mcor2,1,as.numeric)
+
+# Lost rownames, copy them again
+rownames(mcor2)<-colnames(mcor2)
+
+# Copy part above diagonal to replace NAs
+mcor2[lower.tri(mcor2)]<-t(mcor2)[lower.tri(mcor2)]
+
+# Verify that the matrix is symmetrix
+isSymmetric(mcor2)
+#TRUE
+
+# Read labels
+labels<-read.csv("Labels.csv", sep=";", header=FALSE)
+colnames(labels) = c("new", "old")
+
+# First item(level) in "new" factor has some invalid characters, clean those
+> levels(labels$new)[46]
+[1] "ï»¿F1a"
+> levels(labels$new)[46]<-"F1a"
+
+# Make labels a matrix (just preference)
+labelsmatrix <-as.matrix(labels)
+
+# Labelsmatrix elements have whitespaces. Trim them. 
+labelsmatrix[,2]<-gsub(" ", "", labelsmatrix[,2])
+labelsmatrix[,1]<-gsub(" ", "", labelsmatrix[,1])
+
+# Create vector of renamed labels
+renamedlabels<-labelsmatrix[match(rownames(mcor2), labelsmatrix[,2],2)]
+
+# Set new labels
+rownames(mcor2)<-renamedlabels
+colnames(mcor2)<-renamedlabels
+
+# Read factors
+factors<-read.csv("factors.csv", sep=";", header=TRUE)
+# cleanup
+colnames(factors)[1]<-"Code"
+# convert to matrix
+mfactors<-as.matrix(factors)
+# Get group no of each item (node in graph)m
+itemGroup<-mfactors[match(rownames(mcor2), mfactors[,1]),3]
+# Unique factors
+uniqueFactors<-unique(mfactors[,2:3])
+# Function that returns a list of item indixes matching a group
+groupMembers<-function(group) {
+	return (which(itemGroup %in% group))
+}
+# apply to create list of group memberships for each group
+itemGroups<-lapply(uniqueFactors[,2], groupMembers)
+
+# use qgraph library
+library(qgraph)
+
+# Open pdf for writing
+pdf("Figure1.pdf")
+
+# Graph
+
+# Show all edges, fill nodes with group color from gray palette
+qgraph(mcor2, layout="spring", groups=itemGroups, palette="gray", theme="gray")
+
+# close pdf
+dev.off()

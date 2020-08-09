@@ -1,0 +1,34 @@
+
+# Read csv
+# make sure decimal separator is "." not ","
+means<-read.csv("Figure 2 data.csv", sep=";", header=TRUE)
+# Fix column names
+colnames(means)<-c("Factor", "Hanging out", "Messing around", "Geeking out")
+
+# Graphing library
+library(ggplot2)
+
+# Open pdf for writing
+pdf("Figure2.pdf")
+
+# Massive ggplot command
+ggplot(data=means, aes(x=Factor)) + 
+geom_point(aes(y=`Messing around`, group=1), shape=15, size=5, colour="grey27") + 
+geom_line(aes(y=`Messing around`, group=1, colour="grey27"), size=1) + 
+geom_point(aes(y=`Hanging out`, group=1), shape=16, size=5, colour="grey48") + 
+geom_line(aes(y=`Hanging out`, group=1,colour="grey48"), size=1) + 
+geom_point(aes(y=`Geeking out`, group=1), shape=17, size=5, colour="grey65") + 
+geom_line(aes(y=`Geeking out`, group=1,colour="grey65"), size=1) + 
+ylim(-1.00, 1.50) + 
+theme_grey() + 
+theme(axis.text.x=element_text(angle=45, hjust=1, colour = 'black', size = 10), axis.title.y=element_text(colour = 'black', size = 10)) + 
+scale_x_discrete(limits=means$Factor) +
+ylab("Scaled and centered means") +
+xlab("") +
+scale_color_manual(name = "",  values=c("grey27","grey48","grey65"), labels = c("Messing around", "Hanging out", "Geeking out")) +
+scale_shape_manual(name = "",  values=c(15,16,17)) +
+theme(legend.position="top")
+
+
+# close pdf
+dev.off()
